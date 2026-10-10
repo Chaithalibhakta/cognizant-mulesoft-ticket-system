@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+	<salesforce:sfdc-config name="Salesforce_Config" doc:name="Salesforce Config" doc:id="2b25cc64-29a2-4a4b-bf0d-98c6c327b3f9" >
+		<salesforce:oauth-client-credentials-connection >
+			<salesforce:oauth-client-credentials clientId="3MVG9FofAY6PhRtFkuh4ue2MXZAfK2QZIsSPz8ps0OhQDuAG4bNGI441NuJ2zTSjQs81Ts3fqlyI30qJV5yVt" clientSecret="EC916F45574D8474B93DC9AE0F6F9785A83F3FE1F30B6BC45EAF3DF646448755" tokenUrl="https://orgfarm-d20e4c33fe-dev-ed.develop.my.salesforce.com/services/oauth2/token" />
+		</salesforce:oauth-client-credentials-connection>
+	</salesforce:sfdc-config>
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="b4f80aa2-0ec2-4144-9558-662e5c49c8c6" >
+		<http:listener-connection host="localhost" port="8081"/>
+	</http:listener-config>
+	<http:listener-config name="OAuth_HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="896f77b4-c034-495c-884c-f19d32833c4e" >
+		<http:listener-connection host="localhost" port="8083" />
+	</http:listener-config>
+	<flow name="support-ticketingFlow" doc:id="5082a6f9-3ee2-4273-be6e-6cdadd0d4c0d" >
+		<http:listener doc:name="Listener" doc:id="11d164dc-ddca-4a5d-a44b-5966282b7813" config-ref="HTTP_Listener_config" path="/api/v1/tickets" outputMimeType="application/json"/>
+		<set-variable value="#[payload]" doc:name="Set Variable" doc:id="f8881147-9a87-400d-b7ca-5ce02927a2d7" variableName="ticketRequest" />
+		<ee:transform doc:name="Transform Message" doc:id="332ab6f6-421a-4fca-a536-17abc3a48a0a" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/java
+---
+{
+    subject: payload.subject,
+    description: payload.description,
+    category: payload.category,
+    product: payload.product,
+    customerId: payload.customerId,
+    customerTier: payload.customerTier,
+    severity: payload.severity,
+    contactEmail: payload.contactEmail,
+    requestId: payload.requestId
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<salesforce:query doc:name="Query" doc:id="613a26a9-9542-4e99-b3bb-e38c981bd218" config-ref="Salesforce_Config">
+			<salesforce:salesforce-query ><![CDATA[SELECT Id, Name, Category_Code__c, Product_Code__c,
+       Customer_Tier__c, Stated_Severity__c,
+       Assigned_Priority__c, Assigned_Team__c,
+       Queue_Name__c, Ack_SLA_Minutes__c,
+       Is_Active__c, Rule_Priority__c
+FROM Routing_Rule__c
+WHERE Is_Active__c = true
+ORDER BY Rule_Priority__c ASC]]></salesforce:salesforce-query>
+		</salesforce:query>
+		<ee:transform doc:name="Transform Message" doc:id="45a7275d-e6ab-40a8-9fe3-bd3d58516c20" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/java
+
+var ticket = vars.ticketRequest
+var rules = payload
+
+var matchingRules = rules filter (r) ->
+    r.Is_Active__c == true and
+    (r.Category_Code__c == ticket.category or r.Category_Code__c == "ALL") and
+    (r.Product_Code__c == ticket.product or r.Product_Code__c == "ALL") and
+    (r.Customer_Tier__c == (ticket.customerTier default "STANDARD") or r.Customer_Tier__c == "ALL") and
+    (r.Stated_Severity__c == ticket.severity or r.Stated_Severity__c == "ALL")
+
+var selectedRule =
+    if (isEmpty(matchingRules))
+        ((rules filter (r) -> r.Name == "RR-099")[0] default {})
+    else
+        matchingRules[0]
+
+---
+[
+    {
+        Subject__c: ticket.subject,
+        Description__c: ticket.description,
+        Category_Code__c: ticket.category,
+        Product_Code__c: ticket.product,
+        Customer_ID__c: ticket.customerId,
+        Stated_Severity__c: ticket.severity,
+        Contact_Email__c: ticket.contactEmail,
+        Request_ID__c: ticket.requestId,
+        Ticket_Status__c: "New",
+        Priority__c: selectedRule.Assigned_Priority__c default "P3",
+        Assigned_Team__c: selectedRule.Assigned_Team__c default "TRIAGE"
+    }
+]]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<salesforce:create type="Support_Ticket__c" doc:name="Create" doc:id="469c18ad-39cc-490d-8553-275ef55353b9" config-ref="Salesforce_Config"/>
+		<ee:transform doc:name="Transform Message" doc:id="7ca771ef-d423-4ad2-a63f-0024782f3805" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+  message: "Ticket creation processed",
+  result: payload
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</flow>
+</mule>
