@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:jms="http://www.mulesoft.org/schema/mule/jms"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+	<jms:config name="ActiveMQ_Config" doc:name="JMS Config" doc:id="c6d523a3-00e9-4f27-aa76-bcb43073df55" >
+		<jms:active-mq-connection specification="JMS_1_0_2b">
+			<jms:caching-strategy >
+				<jms:no-caching />
+			</jms:caching-strategy>
+			<jms:factory-configuration brokerUrl="tcp://localhost:61616" maxRedelivery="3"/>
+		</jms:active-mq-connection>
+	</jms:config>
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="c5788352-bc24-4cf3-a791-a334e99c633e" >
+		<http:listener-connection host="0.0.0.0" port="8081" />
+	</http:listener-config>
+	<flow name="support-ticket-asyncFlow" doc:id="531f6717-5efe-407a-9ca8-0a063b0a7ffe" >
+		<http:listener doc:name="Listener" doc:id="6a9f276d-1c8a-4986-9396-706e0f43a09f" config-ref="HTTP_Listener_config" path="/test-publish"/>
+		<set-payload value="#[payload]" doc:name="Set Payload" doc:id="f38041b1-0d50-434b-8e6c-031db16eca49" />
+		<logger level="INFO" doc:name="Logger" doc:id="a84d9aaa-624c-447a-8243-0ff44b0d58bd" message="#[correlationId]"/>
+		<jms:publish doc:name="Publish" doc:id="57aad0db-8095-4156-a17c-0a27e6dcec05" destination="support.p1.queue" sendCorrelationId="AUTO" config-ref="ActiveMQ_Config"/>
+	</flow>
+	<flow name="support-ticket-processorFlow" doc:id="c1bd019c-ab7b-4663-bb15-66e669f266fc" >
+		<jms:listener doc:name="On New Message" doc:id="7b6a6b06-65dc-4f2d-b57c-714d7d411c14" config-ref="ActiveMQ_Config" destination="support.p1.queue" ackMode="AUTO">
+			<redelivery-policy maxRedeliveryCount="3" />
+		</jms:listener>
+		<logger level="INFO" doc:name="Log Received Ticket" doc:id="907d2baa-d20d-43da-949b-ba5275f54a37" message="#[payload]"/>
+		<error-handler>
+			<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="ca8d7111-c889-499e-92ff-f53b3bf999da" >
+				<logger level="ERROR" doc:name="Log Ticket Processing Error" doc:id="314085fc-3cb4-4e7e-945d-2ba9d74c6b70" message="Ticket processing failed. Check the error details."/>
+			</on-error-propagate>
+		</error-handler>
+	</flow>
+</mule>
