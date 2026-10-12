@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <os:object-store name="Ticket_Store" persistent="false" doc:name="Object store"/>
+
+    <sub-flow name="find-ticket-by-request-id-stub">
+    <choice doc:name="Simulate backend down?">
+        <when expression="#[p('test.simulateBackendDown') == 'true']">
+            <raise-error type="CUSTOM:BACKEND_UNAVAILABLE" description="Backend is unavailable (simulated)." doc:name="Simulated outage"/>
+        </when>
+    </choice>
+    <try doc:name="Try">
+        <os:retrieve key="#['req-' ++ vars.requestId]" objectStore="Ticket_Store" doc:name="Retrieve by request id"/>
+        <error-handler>
+            <on-error-continue type="OS:KEY_NOT_FOUND" doc:name="Not found">
+                <set-payload value="#[null]" doc:name="Null"/>
+            </on-error-continue>
+        </error-handler>
+    </try>
+</sub-flow>
+
+    <sub-flow name="get-customer-stub">
+        <ee:transform doc:name="Lookup customer">
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var customers = { "CUST-77219": "ENTERPRISE", "CUST-81140": "STANDARD", "CUST-66207": "STANDARD" }
+---
+if (customers[vars.customerId] != null) { customerId: vars.customerId, tier: customers[vars.customerId] } else null]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </sub-flow>
+
+    <sub-flow name="get-product-stub">
+        <ee:transform doc:name="Lookup product">
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var products = ["PAY-GATEWAY", "MOBILE-APP", "DATA-SYNC"]
+---
+if (products contains vars.productCode) { productCode: vars.productCode } else null]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </sub-flow>
+
+    <sub-flow name="route-ticket-stub">
+        <ee:transform doc:name="Temporary route result">
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+  matchedRuleId: "STUB",
+  priority: "P3",
+  team: "TRIAGE",
+  targetQueue: "support.std.queue",
+  priorityReason: "Stub route, replaced by Member 2 routing",
+  isDefaultRoute: true,
+  ackDueAt: (now() + |PT4H|) as String,
+  resolutionDueAt: (now() + |PT24H|) as String
+}]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </sub-flow>
+
+    <sub-flow name="save-ticket-stub">
+        <ee:transform doc:name="Add ticketId, status, createdAt">
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+payload ++ {
+  ticketId: "TKT-" ++ (now().year as String) ++ "-" ++ ((randomInt(9000000) + 1000000) as String),
+  status: "NEW",
+  createdAt: now() as String
+}]]></ee:set-payload></ee:message>
+        </ee:transform>
+        <os:store key="#['req-' ++ vars.requestId]" objectStore="Ticket_Store" doc:name="Store by request id">
+            <os:value>#[payload]</os:value>
+        </os:store>
+        <os:store key="#['tkt-' ++ payload.ticketId]" objectStore="Ticket_Store" doc:name="Store by ticket id">
+            <os:value>#[payload]</os:value>
+        </os:store>
+    </sub-flow>
+
+    <sub-flow name="get-ticket-by-id-stub">
+    <try doc:name="Try">
+        <os:retrieve key="#['tkt-' ++ vars.ticketId]" objectStore="Ticket_Store" doc:name="Retrieve by ticket id"/>
+        <error-handler>
+            <on-error-continue type="OS:KEY_NOT_FOUND" doc:name="Not found">
+                <set-payload value="#[null]" doc:name="Null"/>
+            </on-error-continue>
+        </error-handler>
+    </try>
+</sub-flow>
+<sub-flow name="update-ticket-status-stub">
+    <ee:transform doc:name="Apply new status">
+        <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+payload ++ { status: vars.newStatus }]]></ee:set-payload></ee:message>
+    </ee:transform>
+    <os:store key="#['tkt-' ++ payload.ticketId]" objectStore="Ticket_Store" doc:name="Store by ticket id">
+        <os:value>#[payload]</os:value>
+    </os:store>
+    <os:store key="#['req-' ++ payload.requestId]" objectStore="Ticket_Store" doc:name="Store by request id">
+        <os:value>#[payload]</os:value>
+    </os:store>
+</sub-flow>
+</mule>
