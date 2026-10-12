@@ -10,7 +10,7 @@ http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mu
 
     <sub-flow name="find-ticket-sf">
         <salesforce:query config-ref="Salesforce_Config" doc:name="Query by request id">
-            <salesforce:salesforce-query><![CDATA[SELECT Id, Name, Request_ID__c, Ticket_Status__c, Priority__c, Assigned_Team__c, Customer_Tier__c, Acknowledgement_Due_At__c, Resolution_Due_At__c, CreatedDate FROM Support_Ticket__c WHERE Request_ID__c = :requestId LIMIT 1]]></salesforce:salesforce-query>
+            <salesforce:salesforce-query><![CDATA[SELECT Id, Name, Request_ID__c, Ticket_Status__c, Priority__c, Assigned_Team__c, Customer_Tier__c, Acknowledgement_Due_At__c, Resolution_Due_At__c, CreatedDate FROM Support_Ticket__c WHERE Request_ID__c = ':requestId' LIMIT 1]]></salesforce:salesforce-query>
             <salesforce:parameters><![CDATA[#[{requestId: vars.requestId}]]]></salesforce:parameters>
         </salesforce:query>
         <ee:transform doc:name="Map to contract or null">
@@ -45,21 +45,22 @@ var t = vars.ticketToSave
     Ticket_Status__c: toSalesforce("NEW"),
     Priority__c: t.priority,
     Assigned_Team__c: t.team,
-    Acknowledgement_Due_At__c: t.ackDueAt as DateTime,
-    Resolution_Due_At__c: t.resolutionDueAt as DateTime
+    Acknowledgement_Due_At__c: if (t.ackDueAt != null) (t.ackDueAt as DateTime) else null,
+    Resolution_Due_At__c: if (t.resolutionDueAt != null) (t.resolutionDueAt as DateTime) else null
   }
 ]
 ]]></ee:set-payload></ee:message>
         </ee:transform>
         <salesforce:create type="Support_Ticket__c" config-ref="Salesforce_Config" doc:name="Create ticket"/>
-        <set-variable variableName="sfId" value="#[(payload[0].id default payload.items[0].id)]" doc:name="Keep Salesforce Id"/>
+        <logger level="INFO" message="#['Salesforce create response: ' ++ write(payload, 'application/json')]"/>
+        <set-variable variableName="sfId" value="#[(payload.id[0] default payload[0].id default payload.items[0].id)]" doc:name="Keep Salesforce Id"/>
         <choice doc:name="Created?">
             <when expression="#[isEmpty(vars.sfId)]">
                 <raise-error type="CUSTOM:SAVE_FAILED" description="Ticket could not be saved." doc:name="Save failed"/>
             </when>
         </choice>
         <salesforce:query config-ref="Salesforce_Config" doc:name="Read back by Id">
-            <salesforce:salesforce-query><![CDATA[SELECT Id, Name, Request_ID__c, Ticket_Status__c, Priority__c, Assigned_Team__c, Customer_Tier__c, Acknowledgement_Due_At__c, Resolution_Due_At__c, CreatedDate FROM Support_Ticket__c WHERE Id = :id]]></salesforce:salesforce-query>
+            <salesforce:salesforce-query><![CDATA[SELECT Id, Name, Request_ID__c, Ticket_Status__c, Priority__c, Assigned_Team__c, Customer_Tier__c, Acknowledgement_Due_At__c, Resolution_Due_At__c, CreatedDate FROM Support_Ticket__c WHERE Id = ':id']]></salesforce:salesforce-query>
             <salesforce:parameters><![CDATA[#[{id: vars.sfId}]]]></salesforce:parameters>
         </salesforce:query>
         <ee:transform doc:name="Map to contract">
@@ -78,7 +79,7 @@ toContract(payload[0]) ++ {
 
     <sub-flow name="get-ticket-by-id-sf">
         <salesforce:query config-ref="Salesforce_Config" doc:name="Query by ticketId">
-            <salesforce:salesforce-query><![CDATA[SELECT Id, Name, Request_ID__c, Ticket_Status__c, Priority__c, Assigned_Team__c, Customer_Tier__c, Acknowledgement_Due_At__c, Resolution_Due_At__c, CreatedDate FROM Support_Ticket__c WHERE Name = :ticketId LIMIT 1]]></salesforce:salesforce-query>
+            <salesforce:salesforce-query><![CDATA[SELECT Id, Name, Request_ID__c, Ticket_Status__c, Priority__c, Assigned_Team__c, Customer_Tier__c, Acknowledgement_Due_At__c, Resolution_Due_At__c, CreatedDate FROM Support_Ticket__c WHERE Name = ':ticketId' LIMIT 1]]></salesforce:salesforce-query>
             <salesforce:parameters><![CDATA[#[{ticketId: vars.ticketId}]]]></salesforce:parameters>
         </salesforce:query>
         <ee:transform doc:name="Map to contract or null">

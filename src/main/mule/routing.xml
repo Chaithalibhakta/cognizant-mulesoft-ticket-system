@@ -35,11 +35,13 @@ output application/java
 
 fun norm(value) = upper(trim((value default "") as String))
 
-fun isWild(value) =
-    isEmpty(norm(value)) or ["ALL", "ANY", "*"] contains norm(value)
-
 fun ruleMatches(ruleValue, ticketValue) =
-    isWild(ruleValue) or norm(ruleValue) == norm(ticketValue)
+    do {
+      var r = norm(ruleValue)
+      var t = norm(ticketValue)
+      ---
+      r == "" or r == "ALL" or r == "ANY" or r == "*" or r == t
+    }
 
 fun isHoliday(day, holidays) =
     !isEmpty(holidays filter (h) -> (h as Date) == (day as Date))
@@ -47,7 +49,7 @@ fun isHoliday(day, holidays) =
 fun isBusinessDay(day, holidays) =
     (day as Date).dayOfWeek >= 1 and
     (day as Date).dayOfWeek <= 5 and
-    not isHoliday(day, holidays)
+    (!isHoliday(day, holidays))
 
 fun nextBusinessStart(dt, holidays) =
     do {
@@ -55,7 +57,7 @@ fun nextBusinessStart(dt, holidays) =
         var start = day ++ |09:00:00|
         var finish = day ++ |17:00:00|
         ---
-        if (not isBusinessDay(day, holidays) or dt >= finish)
+        if ((!isBusinessDay(day, holidays)) or dt >= finish)
             nextBusinessStart((day + |P1D|) ++ |09:00:00|, holidays)
         else if (dt < start)
             start
