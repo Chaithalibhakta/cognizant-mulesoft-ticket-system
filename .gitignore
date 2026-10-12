@@ -2,4 +2,3 @@ target/
 .mule/
 .settings/
 *.jar
-config-local.properties
