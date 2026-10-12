@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit" xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools  http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+	<munit:config name="support-ticketing-test.xml" />
+	<munit:test name="support-ticketing-test-support-ticketingFlowTest" doc:id="33412f51-632f-4598-aacf-33393d453a5f" description="Test">
+		<munit:behavior >
+			<munit-tools:mock-when doc:name="Mock when" doc:id="0894a6de-a08a-4dd8-9541-15953712c5c8" processor="flow">
+				<munit-tools:with-attributes >
+					<munit-tools:with-attribute whereValue="support-ticketingFlow" attributeName="name" />
+					<munit-tools:with-attribute whereValue="5082a6f9-3ee2-4273-be6e-6cdadd0d4c0d" attributeName="doc:id" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return >
+					<munit-tools:payload value='#[[{&#10;	id: "mock-ticket-id",success: true,errors: [], items: []&#10;}]]' encoding="UTF-16" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		<munit:execution >
+			<munit:set-event doc:name="Set Event" doc:id="f0ff9ec4-6ad8-403f-afac-1a62ff82635f" >
+				<munit:payload value='#[{&#10;  "subject": "MUnit test ticket",&#10;  "description": "Testing intelligent routing",&#10;  "category": "HOW_TO",&#10;  "product": "CRM",&#10;  "customerId": "CUST-MUNIT-001",&#10;  "customerTier": "STANDARD",&#10;  "severity": "LOW",&#10;  "contactEmail": "munit@example.com",&#10;  "requestId": "REQ-MUNIT-001"&#10;}]' mediaType="application/java" />
+			</munit:set-event>
+			<flow-ref doc:name="Flow-ref to support-ticketingFlow" doc:id="8071784f-a42e-45dc-9655-fb13b3235e04" name="support-ticketingFlow"/>
+		</munit:execution>
+		<munit:validation >
+			<munit-tools:assert-that doc:name="Assert that" doc:id="65c18f8a-5121-4b2d-8e66-8fc332bd6246" message="Ticket flow should return a response" expression="#[payload != null]" is="#[MunitTools::notNullValue()]"/>
+		</munit:validation>
+	</munit:test>
+
+
+</mule>
