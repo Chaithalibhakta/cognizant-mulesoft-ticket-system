@@ -19,7 +19,6 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 	</http:listener-config>
 	<flow name="support-ticketingFlow" doc:id="5082a6f9-3ee2-4273-be6e-6cdadd0d4c0d" >
 		<http:listener doc:name="Listener" doc:id="11d164dc-ddca-4a5d-a44b-5966282b7813" config-ref="HTTP_Listener_config" path="/api/v1/tickets" outputMimeType="application/json"/>
-		<set-variable value="#[payload]" doc:name="Set Variable" doc:id="f8881147-9a87-400d-b7ca-5ce02927a2d7" variableName="ticketRequest" />
 		<ee:transform doc:name="Transform Message" doc:id="332ab6f6-421a-4fca-a536-17abc3a48a0a" >
 			<ee:message >
 				<ee:set-payload ><![CDATA[%dw 2.0
@@ -38,36 +37,153 @@ output application/java
 }]]></ee:set-payload>
 			</ee:message>
 		</ee:transform>
-		<salesforce:query doc:name="Query" doc:id="613a26a9-9542-4e99-b3bb-e38c981bd218" config-ref="Salesforce_Config">
-			<salesforce:salesforce-query ><![CDATA[SELECT Id, Name, Category_Code__c, Product_Code__c,
+		<set-variable value="#[payload]" doc:name="Set Variable" doc:id="f8881147-9a87-400d-b7ca-5ce02927a2d7" variableName="ticketRequest" />
+		<salesforce:query doc:name="Routing Query" doc:id="613a26a9-9542-4e99-b3bb-e38c981bd218" config-ref="Salesforce_Config">
+			<salesforce:salesforce-query><![CDATA[SELECT Id, Name, Category_Code__c, Product_Code__c,
        Customer_Tier__c, Stated_Severity__c,
        Assigned_Priority__c, Assigned_Team__c,
        Queue_Name__c, Ack_SLA_Minutes__c,
+       Resolution_SLA_Hours__c,
        Is_Active__c, Rule_Priority__c
 FROM Routing_Rule__c
 WHERE Is_Active__c = true
 ORDER BY Rule_Priority__c ASC]]></salesforce:salesforce-query>
 		</salesforce:query>
+		<set-variable value="#[payload]" doc:name="Routing Rules Backup" doc:id="6e6ff50c-d074-43ef-ad89-e3530c2c2131" variableName="routingRules"/>
+		<salesforce:query doc:name="Holiday Query" doc:id="0f90ea0c-fcce-4b2f-8639-a9f37c9970c8" config-ref="Salesforce_Config">
+			<salesforce:salesforce-query ><![CDATA[
+SELECT Id, Name, Holiday_Date__c
+FROM Business_Holiday__c
+]]></salesforce:salesforce-query>
+		</salesforce:query>
+		<set-variable value="#[payload]" doc:name="Holiday Backup" doc:id="930ce27b-195e-4c8a-92d1-13b54c7b81b2" variableName="holidays"/>
+		<logger level="INFO" doc:name="Logger" doc:id="a18e5840-0776-4463-8864-4d64c1bb9c87" message='#[write(payload, "application/json")]' />
 		<ee:transform doc:name="Transform Message" doc:id="45a7275d-e6ab-40a8-9fe3-bd3d58516c20" >
 			<ee:message >
 				<ee:set-payload ><![CDATA[%dw 2.0
 output application/java
 
-var ticket = vars.ticketRequest
-var rules = payload
+fun norm(value) = upper((value default "") as String)
 
-var matchingRules = rules filter (r) ->
-    r.Is_Active__c == true and
-    (r.Category_Code__c == ticket.category or r.Category_Code__c == "ALL") and
-    (r.Product_Code__c == ticket.product or r.Product_Code__c == "ALL") and
-    (r.Customer_Tier__c == (ticket.customerTier default "STANDARD") or r.Customer_Tier__c == "ALL") and
-    (r.Stated_Severity__c == ticket.severity or r.Stated_Severity__c == "ALL")
+fun isHoliday(day, holidays) =
+    !isEmpty(
+        holidays filter (h) ->
+            (h as Date) == (day as Date)
+    )
+fun calculateAckDue(start, priority, ackMinutes, holidays) =
+    if (upper(priority default "P3") == "P1")
+        start +
+            (("PT" ++
+            (ackMinutes as String {format: "0"}) ++
+            "M") as Period)
+    else
+        addBusinessMinutes(start, ackMinutes, holidays)
+
+fun isBusinessDay(day, holidays) =
+    (day as Date).dayOfWeek >= 1 and
+    (day as Date).dayOfWeek <= 5 and
+    not isHoliday(day, holidays)
+
+fun nextBusinessStart(dt, holidays) =
+    do {
+        var day = dt as Date
+        var start = day ++ |09:00:00|
+        var finish = day ++ |17:00:00|
+        ---
+        if (not isBusinessDay(day, holidays) or dt >= finish)
+            nextBusinessStart(
+                (day + |P1D|) ++ |09:00:00|,
+                holidays
+            )
+        else if (dt < start)
+            start
+        else
+            dt
+    }
+
+fun addBusinessMinutes(start, remaining, holidays) =
+    if (remaining <= 0)
+        start
+    else
+        do {
+            var current = nextBusinessStart(start, holidays)
+            var day = current as Date
+            var finish = day ++ |17:00:00|
+            var available =
+    ((finish - current) as Number {unit: "minutes"})
+            ---
+            if (remaining <= available)
+                current +
+                    (("PT" ++
+                    ((remaining as Number) as String {format: "0"}) ++
+                    "M") as Period)
+            else
+                addBusinessMinutes(
+                    (day + |P1D|) ++ |09:00:00|,
+                    remaining - available,
+                    holidays
+                )
+        }
+
+var ticket = vars.ticketRequest
+var rules = vars.routingRules
+var holidays = (vars.holidays default [])
+    map ((h) -> h.Holiday_Date__c as Date)
+
+fun matches(ruleValue, ticketValue) =
+    norm(ruleValue) == norm(ticketValue) or
+    norm(ruleValue) == "ALL" or
+    norm(ruleValue) == "ANY"
+
+var matchingRules =
+    (rules filter (r) ->
+        lower((r.Is_Active__c default false) as String) == "true" and
+        matches(r.Category_Code__c, ticket.category) and
+        matches(r.Product_Code__c, ticket.product) and
+        matches(
+            r.Customer_Tier__c,
+            ticket.customerTier default "STANDARD"
+        ) and
+        matches(r.Stated_Severity__c, ticket.severity)
+    ) orderBy ((r) -> (r.Rule_Priority__c as Number) default 999)
 
 var selectedRule =
-    if (isEmpty(matchingRules))
-        ((rules filter (r) -> r.Name == "RR-099")[0] default {})
-    else
+    if (!isEmpty(matchingRules))
         matchingRules[0]
+    else
+        (rules filter (r) -> r.Name == "RR-099")[0] default {}
+
+var ackMinutes =
+    (selectedRule.Ack_SLA_Minutes__c default 240) as Number
+
+var resolutionHours =
+    (selectedRule.Resolution_SLA_Hours__c default 72) as Number
+
+var priority =
+    upper(selectedRule.Assigned_Priority__c default "P3")
+
+var acknowledgementDueAt =
+    calculateAckDue(
+        now(),
+        priority,
+        ackMinutes,
+        holidays
+    )
+
+
+var resolutionDueAt =
+    if (priority == "P1")
+        now() +
+            (("PT" ++
+            ((resolutionHours * 60) as String {format: "0"}) ++
+            "M") as Period)
+    else
+        addBusinessMinutes(
+            now(),
+            resolutionHours * 60,
+            holidays
+        )
+
 
 ---
 [
@@ -77,20 +193,25 @@ var selectedRule =
         Category_Code__c: ticket.category,
         Product_Code__c: ticket.product,
         Customer_ID__c: ticket.customerId,
-        Stated_Severity__c: ticket.severity,
+        Customer_Tier__c: ticket.customerTier default "STANDARD",
         Contact_Email__c: ticket.contactEmail,
         Request_ID__c: ticket.requestId,
+        Stated_Severity__c: ticket.severity,
         Ticket_Status__c: "New",
-        Priority__c: selectedRule.Assigned_Priority__c default "P3",
-        Assigned_Team__c: selectedRule.Assigned_Team__c default "TRIAGE"
+        Priority__c: priority,
+        Assigned_Team__c: selectedRule.Assigned_Team__c default "TRIAGE",
+        Acknowledgement_Due_At__c: acknowledgementDueAt,
+        Resolution_Due_At__c: resolutionDueAt
+
     }
-]]]></ee:set-payload>
+]
+]]></ee:set-payload>
 			</ee:message>
 		</ee:transform>
-		<salesforce:create type="Support_Ticket__c" doc:name="Create" doc:id="469c18ad-39cc-490d-8553-275ef55353b9" config-ref="Salesforce_Config"/>
-		<ee:transform doc:name="Transform Message" doc:id="7ca771ef-d423-4ad2-a63f-0024782f3805" >
-			<ee:message >
-				<ee:set-payload ><![CDATA[%dw 2.0
+		<salesforce:create type="Support_Ticket__c" doc:name="Create" doc:id="6e337e92-0117-408c-9ac3-de55731725d2" config-ref="Salesforce_Config" />
+		<ee:transform doc:name="Transform Message" doc:id="7ca771ef-d423-4ad2-a63f-0024782f3805">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
 output application/json
 ---
 {
@@ -99,5 +220,12 @@ output application/json
 }]]></ee:set-payload>
 			</ee:message>
 		</ee:transform>
+	</flow>
+	<flow name="support-ticketingFlow1" doc:id="749dec9c-d779-4f24-ab65-194224994eda" >
+		<salesforce:query doc:name="Query" doc:id="1b8b7224-5620-44e0-8fd3-40c4d0996a26" config-ref="Salesforce_Config">
+			<salesforce:salesforce-query ><![CDATA[SELECT Id, Name, Holiday_Date__c
+FROM Business_Holiday__c]]></salesforce:salesforce-query>
+		</salesforce:query>
+		<logger level="INFO" doc:name="Logger" doc:id="da161008-f099-412a-bd7c-8256957ce53d" message='#[write(payload, "application/json")]'/>
 	</flow>
 </mule>
