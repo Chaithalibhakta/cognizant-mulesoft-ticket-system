@@ -381,4 +381,26 @@ var acked = if (payload.acknowledgedAt != null) payload.acknowledgedAt as DateTi
         </ee:transform>
     </sub-flow>
 
+    <!-- Subflow: Validate Customer Existence and Tier -->
+    <sub-flow name="validate-customer">
+        <ee:transform doc:name="Lookup customer">
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var customers = { "CUST-77219": "ENTERPRISE", "CUST-81140": "STANDARD", "CUST-66207": "STANDARD", "CUST-001": "STANDARD" }
+---
+if (customers[vars.customerId] != null) { customerId: vars.customerId, tier: customers[vars.customerId] } else null]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </sub-flow>
+
+    <!-- Subflow: Validate Product Catalog Existence -->
+    <sub-flow name="validate-product">
+        <ee:transform doc:name="Lookup product">
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var products = ["PAY-GATEWAY", "MOBILE-APP", "DATA-SYNC", "PAY-GATEWAY-V1"]
+---
+if (products contains vars.productCode) { productCode: vars.productCode } else null]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </sub-flow>
+
 </mule>

@@ -9,6 +9,11 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd">
 
     <sub-flow name="find-ticket-sf">
+        <choice doc:name="Simulate backend down?">
+            <when expression="#[p('test.simulateBackendDown') == 'true']">
+                <raise-error type="CUSTOM:BACKEND_UNAVAILABLE" description="Backend is unavailable (simulated)." doc:name="Simulated outage"/>
+            </when>
+        </choice>
         <salesforce:query config-ref="Salesforce_Config" doc:name="Query by request id">
             <salesforce:salesforce-query><![CDATA[SELECT Id, Name, Request_ID__c, Ticket_Status__c, Priority__c, Assigned_Team__c, Customer_Tier__c, Acknowledgement_Due_At__c, Resolution_Due_At__c, CreatedDate FROM Support_Ticket__c WHERE Request_ID__c = ':requestId' LIMIT 1]]></salesforce:salesforce-query>
             <salesforce:parameters><![CDATA[#[{requestId: vars.requestId}]]]></salesforce:parameters>
