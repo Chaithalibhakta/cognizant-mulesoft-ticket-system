@@ -56,6 +56,7 @@ output application/json
     </when>
     <otherwise>
     <set-variable variableName="currentStatus" value="#[payload.status as String]" doc:name="Set currentStatus"/>
+    <set-variable variableName="ticketSfId" value="#[payload.sfId]" doc:name="Set ticketSfId"/>
         <ee:transform doc:name="Check transition">
             <ee:message/>
             <ee:variables>
@@ -82,7 +83,7 @@ isAllowed(vars.currentStatus, vars.newStatus)]]></ee:set-variable>
     <ee:transform doc:name="Status response">
         <ee:message><ee:set-payload><![CDATA[%dw 2.0
 output application/json skipNullOn="everywhere"
-var ackDue = payload.ackDueAt as DateTime
+var ackDue = if (payload.ackDueAt != null) payload.ackDueAt as DateTime else null
 var acked = if (payload.acknowledgedAt != null) payload.acknowledgedAt as DateTime else null
 ---
 {
@@ -94,7 +95,7 @@ var acked = if (payload.acknowledgedAt != null) payload.acknowledgedAt as DateTi
   assignedAt: payload.assignedAt,
   acknowledgedAt: payload.acknowledgedAt,
   ackDueAt: payload.ackDueAt,
-  ackBreached: if (acked != null) (acked > ackDue) else (now() > ackDue)
+  ackBreached: if (ackDue == null) false else if (acked != null) (acked > ackDue) else (now() > ackDue)
 }]]></ee:set-payload></ee:message>
     </ee:transform>
 </sub-flow>
@@ -113,7 +114,7 @@ var acked = if (payload.acknowledgedAt != null) payload.acknowledgedAt as DateTi
         <ee:transform doc:name="Status response">
             <ee:message><ee:set-payload><![CDATA[%dw 2.0
 output application/json skipNullOn="everywhere"
-var ackDue = payload.ackDueAt as DateTime
+var ackDue = if (payload.ackDueAt != null) payload.ackDueAt as DateTime else null
 var acked = if (payload.acknowledgedAt != null) payload.acknowledgedAt as DateTime else null
 ---
 {
@@ -125,7 +126,7 @@ var acked = if (payload.acknowledgedAt != null) payload.acknowledgedAt as DateTi
   assignedAt: payload.assignedAt,
   acknowledgedAt: payload.acknowledgedAt,
   ackDueAt: payload.ackDueAt,
-  ackBreached: if (acked != null) (acked > ackDue) else (now() > ackDue)
+  ackBreached: if (ackDue == null) false else if (acked != null) (acked > ackDue) else (now() > ackDue)
 }]]></ee:set-payload></ee:message>
         </ee:transform>
     </otherwise>
@@ -229,30 +230,33 @@ vars.ticketRequest ++ {
 }]]></ee:set-payload></ee:message>
 </ee:transform>
 <flow-ref name="${impl.saveTicket}" doc:name="Save ticket"/>
+<set-variable variableName="savedTicket" value="#[payload]" doc:name="Keep saved ticket"/>
+<flow-ref name="publish-ticket-to-queue" doc:name="Publish to JMS queue"/>
 
 <ee:transform doc:name="201 response">
     <ee:message><ee:set-payload><![CDATA[%dw 2.0
 output application/json
+var t = vars.savedTicket default payload
 ---
 {
-  ticketId: payload.ticketId,
-  status: payload.status,
-  priority: payload.priority,
-  priorityReason: payload.priorityReason,
-  matchedRuleId: payload.matchedRuleId,
-  team: payload.team,
-  targetQueue: payload.targetQueue,
-  createdAt: payload.createdAt,
-  ackDueAt: payload.ackDueAt,
-  resolutionDueAt: payload.resolutionDueAt,
-  statusUrl: "/api/v1/tickets/" ++ payload.ticketId
+  ticketId: t.ticketId,
+  status: t.status,
+  priority: t.priority,
+  priorityReason: t.priorityReason,
+  matchedRuleId: t.matchedRuleId,
+  team: t.team,
+  targetQueue: t.targetQueue,
+  createdAt: t.createdAt,
+  ackDueAt: t.ackDueAt,
+  resolutionDueAt: t.resolutionDueAt,
+  statusUrl: "/api/v1/tickets/" ++ t.ticketId
 }]]></ee:set-payload></ee:message>
     <ee:variables>
         <ee:set-variable variableName="httpStatus">201</ee:set-variable>
         <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
 output application/java
 ---
-{ "Location": "/api/v1/tickets/" ++ payload.ticketId }]]></ee:set-variable>
+{ "Location": "/api/v1/tickets/" ++ t.ticketId }]]></ee:set-variable>
     </ee:variables>
 </ee:transform>
     </otherwise>

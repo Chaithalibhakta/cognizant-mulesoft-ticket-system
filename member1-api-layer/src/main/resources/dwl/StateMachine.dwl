@@ -1,9 +1,13 @@
 %dw 2.0
-var toSf = {
-  NEW: "New", UNASSIGNED: "Unassigned", ASSIGNED: "Assigned",
-  IN_PROGRESS: "In Progress", PENDING_CUSTOMER: "Pending Customer",
-  RESOLVED: "Resolved", CLOSED: "Closed", CANCELLED: "Cancelled"
+var transitions = {
+  NEW: ["UNASSIGNED", "ASSIGNED", "CANCELLED"],
+  UNASSIGNED: ["ASSIGNED", "CANCELLED"],
+  ASSIGNED: ["IN_PROGRESS", "UNASSIGNED", "CANCELLED"],
+  IN_PROGRESS: ["PENDING_CUSTOMER", "RESOLVED", "CANCELLED"],
+  PENDING_CUSTOMER: ["IN_PROGRESS", "RESOLVED", "CANCELLED"],
+  RESOLVED: ["CLOSED", "IN_PROGRESS"],
+  CLOSED: [],
+  CANCELLED: []
 }
-fun toSalesforce(s) = toSf[s] default s
-fun fromSalesforce(s) =
-  (toSf pluck ((v, k) -> { sf: v, mule: k as String }) filter ($.sf == s))[0].mule default s
+fun isAllowed(fromStatus: String, toStatus: String): Boolean =
+  (transitions[upper(fromStatus default "")] default []) contains upper(toStatus default "")
