@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:jms="http://www.mulesoft.org/schema/mule/jms"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd">
+
+    <sub-flow name="publish-ticket-to-queue">
+        <try doc:name="Try Publish to JMS">
+            <jms:publish doc:name="Publish to team queue"
+                         config-ref="ActiveMQ_Config"
+                         destination="#[vars.routing.targetQueue default 'support.std.queue']"
+                         priority="#[if (vars.routing.priority == 'P1') 9 else if (vars.routing.priority == 'P4') 2 else 5]">
+                <jms:message>
+                    <jms:body><![CDATA[#[%dw 2.0
+output application/json
+---
+{
+  eventType: "TICKET_ROUTED",
+  eventId: "evt-" ++ uuid(),
+  correlationId: vars.correlationId,
+  routedAt: now() as String,
+  ticketId: vars.savedTicket.ticketId,
+  priority: vars.savedTicket.priority,
+  team: vars.savedTicket.team,
+  matchedRuleId: vars.savedTicket.matchedRuleId,
+  customerId: vars.ticketRequest.customerId,
+  customerTier: vars.customerTier,
+  contactEmail: vars.ticketRequest.contactEmail,
+  productCode: vars.ticketRequest.productCode,
+  categoryCode: vars.ticketRequest.categoryCode,
+  subject: vars.ticketRequest.subject,
+  ackDueAt: vars.savedTicket.ackDueAt,
+  resolutionDueAt: vars.savedTicket.resolutionDueAt,
+  attempt: 1
+}]]]></jms:body>
+                    <jms:properties><![CDATA[#[{
+                        "JMSType": "TicketRouted",
+                        "correlationId": vars.correlationId,
+                        "ticketId": vars.savedTicket.ticketId,
+                        "priority": vars.savedTicket.priority
+                    }]]]></jms:properties>
+                </jms:message>
+            </jms:publish>
+            <error-handler>
+                <on-error-continue enableNotifications="false" logException="true" doc:name="Broker Unavailable Fallback">
+                    <logger level="WARN" message="#['ActiveMQ broker not reachable for ticket ' ++ (vars.savedTicket.ticketId default '') ++ '. Ticket persists in Salesforce.']" doc:name="Log broker warning"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <flow name="support-ticket-p1-consumerFlow">
+        <jms:listener doc:name="On P1 Message" config-ref="ActiveMQ_Config" destination="support.p1.queue" ackMode="AUTO">
+            <jms:consumer-type>
+                <jms:queue-consumer/>
+            </jms:consumer-type>
+            <jms:response sendCorrelationId="AUTO"/>
+        </jms:listener>
+        <logger level="INFO" doc:name="Log P1 Ticket" message="#['[P1 Queue Consumer] Received ticket: ' ++ write(payload, 'application/json')]"/>
+    </flow>
+
+    <flow name="support-ticket-std-consumerFlow">
+        <jms:listener doc:name="On Std Message" config-ref="ActiveMQ_Config" destination="support.std.queue" ackMode="AUTO">
+            <jms:consumer-type>
+                <jms:queue-consumer/>
+            </jms:consumer-type>
+            <jms:response sendCorrelationId="AUTO"/>
+        </jms:listener>
+        <logger level="INFO" doc:name="Log Std Ticket" message="#['[Std Queue Consumer] Received ticket: ' ++ write(payload, 'application/json')]"/>
+    </flow>
+
+    <flow name="support-ticket-low-consumerFlow">
+        <jms:listener doc:name="On Low Message" config-ref="ActiveMQ_Config" destination="support.low.queue" ackMode="AUTO">
+            <jms:consumer-type>
+                <jms:queue-consumer/>
+            </jms:consumer-type>
+            <jms:response sendCorrelationId="AUTO"/>
+        </jms:listener>
+        <logger level="INFO" doc:name="Log Low Ticket" message="#['[Low Queue Consumer] Received ticket: ' ++ write(payload, 'application/json')]"/>
+    </flow>
+
+</mule>

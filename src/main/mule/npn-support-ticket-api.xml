@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"  xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd ">
+    <http:listener-config name="npn-support-ticket-api-httpListenerConfig">
+        <http:listener-connection host="${http.host}" port="${http.port}" />
+    </http:listener-config>
+    <apikit:config name="npn-support-ticket-api-config" api="resource::ec8673e6-03eb-4062-bc33-e6ca888fddea:npn-support-ticket-api:1.0.0:raml:zip:npn-support-ticket-api.raml" outboundHeadersMapName="outboundHeaders" httpStatusVarName="httpStatus" />
+	<flow name="npn-support-ticket-api-main">
+        <http:listener config-ref="npn-support-ticket-api-httpListenerConfig" path="${api.basePath}">
+    <http:response statusCode="#[vars.httpStatus default 200]">
+        <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+    </http:response>
+    <http:error-response statusCode="#[vars.httpStatus default 500]">
+        <http:body><![CDATA[#[payload]]]></http:body>
+        <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+    </http:error-response>
+</http:listener>
+        <apikit:router config-ref="npn-support-ticket-api-config" />
+    </flow>
+    <flow name="npn-support-ticket-api-console">
+        <http:listener config-ref="npn-support-ticket-api-httpListenerConfig" path="/console/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <apikit:console config-ref="npn-support-ticket-api-config" />
+        <error-handler>
+            <on-error-propagate type="APIKIT:NOT_FOUND">
+                <ee:transform doc:name="Transform Message">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{message: "Resource not found"}]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="httpStatus">404</ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+    <flow name="patch:\tickets\(ticketId):application\json:npn-support-ticket-api-config">
+        <set-variable variableName="ticketId" value="#[attributes.uriParams.ticketId]" doc:name="Set ticketId"/>
+        <set-variable variableName="newStatus" value="#[payload.status as String]" doc:name="Set newStatus"/>
+<set-variable variableName="correlationId" value="#[attributes.headers.'x-request-id' default correlationId]" doc:name="Set correlationId"/>
+<logger level="INFO" message="#[output application/java --- '[' ++ vars.correlationId ++ '] Status update for ' ++ vars.ticketId ++ ' to ' ++ vars.newStatus]" doc:name="Log request"/>
+<flow-ref name="${impl.getTicket}" doc:name="Get ticket"/>
+
+<choice doc:name="Ticket found?">
+    <when expression="#[payload == null]">
+        <raise-error type="CUSTOM:TICKET_NOT_FOUND" description="#['ticketId ' ++ vars.ticketId ++ ' was not found.']" doc:name="Ticket not found"/>
+    </when>
+    <otherwise>
+    <set-variable variableName="currentStatus" value="#[payload.status as String]" doc:name="Set currentStatus"/>
+    <set-variable variableName="ticketSfId" value="#[payload.sfId]" doc:name="Set ticketSfId"/>
+        <ee:transform doc:name="Check transition">
+            <ee:message/>
+            <ee:variables>
+                <ee:set-variable variableName="transitionAllowed"><![CDATA[%dw 2.0
+import isAllowed from dwl::StateMachine
+output application/java
+---
+isAllowed(vars.currentStatus, vars.newStatus)]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <choice doc:name="Transition allowed?">
+            <when expression="#[vars.transitionAllowed]">
+                <flow-ref name="${impl.updateStatus}" doc:name="Update status"/>
+                <flow-ref name="build-status-response" doc:name="Build response"/>
+            </when>
+            <otherwise>
+                <raise-error type="CUSTOM:INVALID_TRANSITION" description="#[output text/plain --- 'Invalid transition from ' ++ (vars.currentStatus as String) ++ ' to ' ++ (vars.newStatus as String)]" doc:name="Invalid transition"/>
+            </otherwise>
+        </choice>
+    </otherwise>
+</choice>
+    </flow>
+    <sub-flow name="build-status-response">
+    <ee:transform doc:name="Status response">
+        <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json skipNullOn="everywhere"
+var ackDue = if (payload.ackDueAt != null) payload.ackDueAt as DateTime else null
+var acked = if (payload.acknowledgedAt != null) payload.acknowledgedAt as DateTime else null
+---
+{
+  ticketId: payload.ticketId,
+  status: payload.status,
+  priority: payload.priority,
+  team: payload.team,
+  assignedTo: payload.assignedTo,
+  assignedAt: payload.assignedAt,
+  acknowledgedAt: payload.acknowledgedAt,
+  ackDueAt: payload.ackDueAt,
+  ackBreached: if (ackDue == null) false else if (acked != null) (acked > ackDue) else (now() > ackDue)
+}]]></ee:set-payload></ee:message>
+    </ee:transform>
+</sub-flow>
+    <flow name="get:\tickets\(ticketId):npn-support-ticket-api-config">
+        <set-variable variableName="ticketId" value="#[attributes.uriParams.ticketId]" doc:name="Set ticketId"/>
+<set-variable variableName="correlationId" value="#[attributes.headers.'x-request-id' default correlationId]" doc:name="Set correlationId"/>
+<logger level="INFO" message="#['[' ++ vars.correlationId ++ '] Status query for ' ++ vars.ticketId]" doc:name="Log request"/>
+
+<flow-ref name="${impl.getTicket}" doc:name="Get ticket"/>
+
+<choice doc:name="Ticket found?">
+    <when expression="#[payload == null]">
+        <raise-error type="CUSTOM:TICKET_NOT_FOUND" description="#['ticketId ' ++ vars.ticketId ++ ' was not found.']" doc:name="Ticket not found"/>
+    </when>
+    <otherwise>
+        <ee:transform doc:name="Status response">
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json skipNullOn="everywhere"
+var ackDue = if (payload.ackDueAt != null) payload.ackDueAt as DateTime else null
+var acked = if (payload.acknowledgedAt != null) payload.acknowledgedAt as DateTime else null
+---
+{
+  ticketId: payload.ticketId,
+  status: payload.status,
+  priority: payload.priority,
+  team: payload.team,
+  assignedTo: payload.assignedTo,
+  assignedAt: payload.assignedAt,
+  acknowledgedAt: payload.acknowledgedAt,
+  ackDueAt: payload.ackDueAt,
+  ackBreached: if (ackDue == null) false else if (acked != null) (acked > ackDue) else (now() > ackDue)
+}]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </otherwise>
+</choice>
+    </flow>
+    <flow name="post:\tickets:application\json:npn-support-ticket-api-config">
+      <set-variable variableName="requestId" value="#[attributes.headers.'x-request-id']" doc:name="Set requestId"/>
+<set-variable variableName="correlationId" value="#[vars.requestId]" doc:name="Set correlationId"/>
+<logger level="INFO" message="#['[' ++ vars.correlationId ++ '] Create ticket received']" doc:name="Log request"/>
+<set-variable variableName="ticketRequest" value="#[payload]" doc:name="Keep request body"/>
+
+<ee:transform doc:name="Collect validation errors">
+    <ee:message/>
+    <ee:variables>
+        <ee:set-variable variableName="validationErrors"><![CDATA[%dw 2.0
+output application/java
+var maxLen = p('ticket.description.maxLength') as Number
+var categories = p('ticket.categories') splitBy ","
+---
+[
+  if (isBlank(payload.subject)) { field: "subject", code: "REQUIRED", message: "subject must not be blank." } else null,
+  if (isBlank(payload.description)) { field: "description", code: "REQUIRED", message: "description must not be blank." } else null,
+  if (sizeOf(payload.description default "") > maxLen) { field: "description", code: "TOO_LONG", message: "description exceeds the maximum length of $(maxLen) characters." } else null,
+  if (!isBlank(payload.categoryCode) and not (categories contains payload.categoryCode)) { field: "categoryCode", code: "INVALID_CATEGORY", message: "categoryCode is not in the configured list." } else null
+] filter ($ != null)]]></ee:set-variable>
+    </ee:variables>
+</ee:transform>
+
+<choice doc:name="Any validation errors?">
+    <when expression="#[sizeOf(vars.validationErrors) > 0]">
+        <raise-error type="CUSTOM:VALIDATION_FAILED" description="Request validation failed." doc:name="Raise validation error"/>
+    </when>
+</choice>
+
+<flow-ref name="${impl.findTicket}" doc:name="Find ticket by request id"/>
+
+<choice doc:name="Duplicate request?">
+    <when expression="#[payload != null]">
+        <logger level="INFO" message="#['[' ++ vars.correlationId ++ '] Duplicate request, returning original ticket']" doc:name="Log duplicate"/>
+        <ee:transform doc:name="Duplicate response">
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ ticketId: payload.ticketId, status: payload.status, duplicateOfRequestId: true }]]></ee:set-payload></ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="httpStatus">200</ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </when>
+    <otherwise>
+        <set-variable variableName="customerId" value="#[vars.ticketRequest.customerId]" doc:name="Set customerId"/>
+        <set-variable variableName="productCode" value="#[vars.ticketRequest.productCode]" doc:name="Set productCode"/>
+
+        <flow-ref name="${impl.getCustomer}" doc:name="Get customer"/>
+        <choice doc:name="Customer found?">
+            <when expression="#[payload == null]">
+                <raise-error type="CUSTOM:UNKNOWN_CUSTOMER" description="#['customerId ' ++ vars.customerId ++ ' was not found.']" doc:name="Unknown customer"/>
+            </when>
+            <otherwise>
+                <set-variable variableName="customerTier" value="#[payload.tier]" doc:name="Set customerTier"/>
+            </otherwise>
+        </choice>
+
+        <flow-ref name="${impl.getProduct}" doc:name="Get product"/>
+        <choice doc:name="Product found?">
+            <when expression="#[payload == null]">
+                <raise-error type="CUSTOM:UNKNOWN_PRODUCT" description="#['productCode ' ++ vars.productCode ++ ' was not found.']" doc:name="Unknown product"/>
+            </when>
+        </choice>
+
+        <ee:transform doc:name="Build routing input">
+    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+  categoryCode: vars.ticketRequest.categoryCode,
+  productCode: vars.ticketRequest.productCode,
+  customerTier: vars.customerTier,
+  statedSeverity: vars.ticketRequest.statedSeverity
+}]]></ee:set-payload></ee:message>
+</ee:transform>
+<flow-ref name="${impl.routeTicket}" doc:name="Route ticket"/>
+<set-variable variableName="routing" value="#[payload]" doc:name="Keep routing result"/>
+
+<ee:transform doc:name="Build ticket record">
+    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+vars.ticketRequest ++ {
+  requestId: vars.requestId,
+  correlationId: vars.correlationId,
+  customerTier: vars.customerTier,
+  priority: vars.routing.priority,
+  team: vars.routing.team,
+  targetQueue: vars.routing.targetQueue,
+  matchedRuleId: vars.routing.matchedRuleId,
+  priorityReason: vars.routing.priorityReason,
+  isDefaultRoute: vars.routing.isDefaultRoute,
+  ackDueAt: vars.routing.ackDueAt,
+  resolutionDueAt: vars.routing.resolutionDueAt
+}]]></ee:set-payload></ee:message>
+</ee:transform>
+<flow-ref name="${impl.saveTicket}" doc:name="Save ticket"/>
+<set-variable variableName="savedTicket" value="#[payload]" doc:name="Keep saved ticket"/>
+<flow-ref name="publish-ticket-to-queue" doc:name="Publish to JMS queue"/>
+
+<ee:transform doc:name="201 response">
+    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var t = vars.savedTicket default payload
+---
+{
+  ticketId: t.ticketId,
+  status: t.status,
+  priority: t.priority,
+  priorityReason: t.priorityReason,
+  matchedRuleId: t.matchedRuleId,
+  team: t.team,
+  targetQueue: t.targetQueue,
+  createdAt: t.createdAt,
+  ackDueAt: t.ackDueAt,
+  resolutionDueAt: t.resolutionDueAt,
+  statusUrl: "/api/v1/tickets/" ++ t.ticketId
+}]]></ee:set-payload></ee:message>
+    <ee:variables>
+        <ee:set-variable variableName="httpStatus">201</ee:set-variable>
+        <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Location": "/api/v1/tickets/" ++ t.ticketId }]]></ee:set-variable>
+    </ee:variables>
+</ee:transform>
+    </otherwise>
+</choice> 
+    </flow>
+</mule>
