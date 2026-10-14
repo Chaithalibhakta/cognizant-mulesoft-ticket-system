@@ -8,7 +8,7 @@ http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/htt
 http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 	<salesforce:sfdc-config name="Salesforce_Config" doc:name="Salesforce Config" doc:id="2b25cc64-29a2-4a4b-bf0d-98c6c327b3f9" >
 		<salesforce:oauth-client-credentials-connection >
-			<salesforce:oauth-client-credentials clientId="3MVG9FofAY6PhRtFkuh4ue2MXZAfK2QZIsSPz8ps0OhQDuAG4bNGI441NuJ2zTSjQs81Ts3fqlyI30qJV5yVt" clientSecret="EC916F45574D8474B93DC9AE0F6F9785A83F3FE1F30B6BC45EAF3DF646448755" tokenUrl="https://orgfarm-d20e4c33fe-dev-ed.develop.my.salesforce.com/services/oauth2/token" />
+			<salesforce:oauth-client-credentials clientId="ADD_CLIENT_KEY" clientSecret="ADD_CLIENT_SECRET" tokenUrl="https:add-salesforce-token" />
 		</salesforce:oauth-client-credentials-connection>
 	</salesforce:sfdc-config>
 	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="b4f80aa2-0ec2-4144-9558-662e5c49c8c6" >
